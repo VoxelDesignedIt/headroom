@@ -9,10 +9,11 @@ import {
 } from "remotion";
 import { MacDesktop } from "./MacDesktop";
 import { EndCard } from "./EndCard";
+import { LAYOUT, statusIconPosition } from "./layout";
 
 export const HeadroomPromo: React.FC = () => {
   const frame = useCurrentFrame();
-  const { fps, width, height } = useVideoConfig();
+  const { fps } = useVideoConfig();
 
   const clickStart = 2 * fps;
   const popoverOpenStart = 2.4 * fps;
@@ -23,6 +24,8 @@ export const HeadroomPromo: React.FC = () => {
   const holdEnd = 8.2 * fps;
   const fadeStart = holdEnd;
   const fadeEnd = 9.2 * fps;
+
+  const target = statusIconPosition();
 
   const popoverOpenSpring = spring({
     frame: frame - popoverOpenStart,
@@ -54,10 +57,15 @@ export const HeadroomPromo: React.FC = () => {
 
   const weeklyPercent = 48;
 
-  const heroOpacity = interpolate(frame, [popoverOpenStart, fillStart, closeStart], [1, 0.35, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const heroOpacity = interpolate(
+    frame,
+    [popoverOpenStart, fillStart, closeStart],
+    [1, 0.35, 0],
+    {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    },
+  );
 
   const desktopOpacity = interpolate(frame, [fadeStart, fadeEnd], [1, 0], {
     extrapolateLeft: "clamp",
@@ -77,32 +85,41 @@ export const HeadroomPromo: React.FC = () => {
     easing: Easing.out(Easing.cubic),
   });
 
+  const moveStart = clickStart - 18;
+  const moveEnd = clickStart + 4;
+
   const cursorX = interpolate(
     frame,
-    [clickStart - 10, clickStart + 8],
-    [width * 0.52, width * 0.79],
+    [moveStart, moveEnd],
+    [LAYOUT.cursorStartX, target.x],
     {
       extrapolateLeft: "clamp",
       extrapolateRight: "clamp",
-      easing: Easing.bezier(0.4, 0, 0.2, 1),
+      easing: Easing.bezier(0.25, 0.1, 0.25, 1),
     },
   );
 
   const cursorY = interpolate(
     frame,
-    [clickStart - 10, clickStart + 8],
-    [height * 0.2, height * 0.034],
+    [moveStart, moveEnd],
+    [LAYOUT.cursorStartY, target.y],
     {
       extrapolateLeft: "clamp",
       extrapolateRight: "clamp",
-      easing: Easing.bezier(0.4, 0, 0.2, 1),
+      easing: Easing.bezier(0.25, 0.1, 0.25, 1),
     },
   );
 
-  const clickScale =
-    frame >= clickStart + 2 && frame <= clickStart + 8 ? 0.86 : 1;
+  const iconHover = interpolate(frame, [moveEnd - 6, moveEnd + 2], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.out(Easing.cubic),
+  });
 
-  const showCursor = frame >= clickStart - 10 && frame < popoverOpenStart + 20;
+  const clickScale =
+    frame >= clickStart + 1 && frame <= clickStart + 7 ? 0.88 : 1;
+
+  const showCursor = frame >= moveStart && frame < popoverOpenStart + 16;
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
@@ -113,6 +130,7 @@ export const HeadroomPromo: React.FC = () => {
           popoverSessionPercent={sessionPercent}
           popoverProgress={popoverProgress}
           heroOpacity={heroOpacity}
+          iconHover={showCursor ? iconHover : 0}
         />
 
         {showCursor && (
@@ -124,6 +142,7 @@ export const HeadroomPromo: React.FC = () => {
               transform: `scale(${clickScale})`,
               pointerEvents: "none",
               zIndex: 50,
+              filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.5))",
             }}
           >
             <MacCursor />
@@ -148,12 +167,13 @@ export const HeadroomPromo: React.FC = () => {
 };
 
 const MacCursor: React.FC = () => (
-  <svg width="22" height="28" viewBox="0 0 22 28" fill="none">
+  <svg width="24" height="30" viewBox="0 0 22 28" fill="none">
     <path
       d="M1 1L1 22.5L6.8 17.8L10.5 26.5L13.5 25.2L9.8 16.5L17.5 16.5L1 1Z"
       fill="white"
-      stroke="#111"
-      strokeWidth="1.2"
+      stroke="rgba(0,0,0,0.85)"
+      strokeWidth="1.4"
+      strokeLinejoin="round"
     />
   </svg>
 );

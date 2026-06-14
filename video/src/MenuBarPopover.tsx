@@ -81,11 +81,12 @@ export const MenuBarPopover: React.FC<MenuBarPopoverProps> = ({
     <div
       style={{
         width: 320,
-        padding: 16,
-        borderRadius: 12,
-        background: "rgba(28,28,32,0.96)",
-        border: "1px solid rgba(255,255,255,0.1)",
-        boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
+        padding: 18,
+        borderRadius: 14,
+        background: "rgba(24,24,30,0.94)",
+        border: "1px solid rgba(255,255,255,0.12)",
+        boxShadow:
+          "0 28px 70px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08)",
         transform: `scale(${scale})`,
         transformOrigin: "top right",
         color: "#fff",
