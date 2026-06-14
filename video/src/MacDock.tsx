@@ -1,25 +1,43 @@
-import { interpolate, useCurrentFrame } from "remotion";
+import { Img, interpolate, staticFile, useCurrentFrame } from "remotion";
 
-const DOCK_ICONS = [
-  { id: "finder", color: "#5AC8FA", label: "F" },
-  { id: "safari", color: "#0A84FF", label: "S" },
-  { id: "messages", color: "#30D158", label: "M" },
-  { id: "mail", color: "#64D2FF", label: "@" },
-  { id: "headroom", color: "#7C83FF", label: "H", active: true },
-  { id: "notes", color: "#FFD60A", label: "N" },
-  { id: "settings", color: "#8E8E93", label: "⚙" },
-  { id: "trash", color: "#636366", label: "🗑" },
+type DockIcon = {
+  id: string;
+  src: string;
+  active?: boolean;
+  separator?: boolean;
+};
+
+/** Typical macOS dock lineup with real system icons */
+const DOCK_ICONS: DockIcon[] = [
+  { id: "finder", src: "dock/finder.png" },
+  { id: "safari", src: "dock/safari.png" },
+  { id: "messages", src: "dock/messages.png" },
+  { id: "mail", src: "dock/mail.png" },
+  { id: "maps", src: "dock/maps.png" },
+  { id: "photos", src: "dock/photos.png" },
+  { id: "facetime", src: "dock/facetime.png" },
+  { id: "calendar", src: "dock/calendar.png" },
+  { id: "contacts", src: "dock/contacts.png" },
+  { id: "reminders", src: "dock/reminders.png" },
+  { id: "notes", src: "dock/notes.png" },
+  { id: "headroom", src: "dock/headroom.png", active: true },
+  { id: "music", src: "dock/music.png" },
+  { id: "podcasts", src: "dock/podcasts.png" },
+  { id: "appstore", src: "dock/appstore.png" },
+  { id: "settings", src: "dock/settings.png" },
+  { id: "divider", src: "", separator: true },
+  { id: "trash", src: "dock/trash.png" },
 ];
 
 export const MacDock: React.FC = () => {
   const frame = useCurrentFrame();
-  const breathe = interpolate(frame % 90, [0, 45, 90], [1, 1.02, 1]);
+  const breathe = interpolate(frame % 90, [0, 45, 90], [1, 1.01, 1]);
 
   return (
     <div
       style={{
         position: "absolute",
-        bottom: 14,
+        bottom: 10,
         left: "50%",
         transform: `translateX(-50%) scale(${breathe})`,
         transformOrigin: "center bottom",
@@ -30,19 +48,34 @@ export const MacDock: React.FC = () => {
         style={{
           display: "flex",
           alignItems: "flex-end",
-          gap: 10,
-          padding: "10px 18px 12px",
-          borderRadius: 22,
-          background: "rgba(255,255,255,0.14)",
-          backdropFilter: "blur(40px) saturate(180%)",
-          border: "1px solid rgba(255,255,255,0.22)",
+          gap: 7,
+          padding: "8px 14px 10px",
+          borderRadius: 20,
+          background: "rgba(245,245,247,0.18)",
+          backdropFilter: "blur(42px) saturate(190%)",
+          border: "1px solid rgba(255,255,255,0.28)",
           boxShadow:
-            "0 18px 50px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.25)",
+            "0 20px 55px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.35)",
         }}
       >
         {DOCK_ICONS.map((icon) => {
-          const lift = icon.active ? 14 : 0;
-          const scale = icon.active ? 1.18 : 1;
+          if (icon.separator) {
+            return (
+              <div
+                key={icon.id}
+                style={{
+                  width: 1,
+                  height: 44,
+                  background: "rgba(255,255,255,0.18)",
+                  margin: "0 4px 8px",
+                  alignSelf: "center",
+                }}
+              />
+            );
+          }
+
+          const lift = icon.active ? 12 : 0;
+          const scale = icon.active ? 1.14 : 1;
 
           return (
             <div
@@ -54,43 +87,37 @@ export const MacDock: React.FC = () => {
                 transform: `translateY(-${lift}px) scale(${scale})`,
               }}
             >
-              <div
+              <Img
+                src={staticFile(icon.src)}
                 style={{
-                  width: 52,
-                  height: 52,
-                  borderRadius: 13,
-                  background: `linear-gradient(145deg, ${icon.color}, ${icon.color}88)`,
+                  width: 50,
+                  height: 50,
+                  borderRadius: 11,
                   boxShadow: icon.active
-                    ? `0 12px 28px ${icon.color}55, 0 0 0 1px rgba(255,255,255,0.15)`
-                    : "0 6px 16px rgba(0,0,0,0.28), 0 0 0 1px rgba(255,255,255,0.08)",
-                  display: "grid",
-                  placeItems: "center",
-                  fontSize: icon.id === "headroom" ? 22 : 18,
-                  fontWeight: 700,
-                  color: "white",
-                  textShadow: "0 1px 2px rgba(0,0,0,0.35)",
+                    ? "0 10px 24px rgba(0,0,0,0.35)"
+                    : "0 4px 12px rgba(0,0,0,0.22)",
                 }}
-              >
-                {icon.label}
-              </div>
+              />
               <div
                 style={{
                   width: 4,
                   height: 4,
                   borderRadius: "50%",
-                  background: icon.active ? "rgba(255,255,255,0.9)" : "transparent",
-                  marginTop: 6,
+                  background: icon.active
+                    ? "rgba(255,255,255,0.92)"
+                    : "transparent",
+                  marginTop: 5,
                 }}
               />
               <div
                 style={{
-                  width: 38,
-                  height: 8,
+                  width: 34,
+                  height: 6,
                   marginTop: 2,
                   borderRadius: "50%",
-                  background: "rgba(0,0,0,0.22)",
-                  filter: "blur(4px)",
-                  opacity: icon.active ? 0.55 : 0.3,
+                  background: "rgba(0,0,0,0.25)",
+                  filter: "blur(3px)",
+                  opacity: icon.active ? 0.5 : 0.28,
                 }}
               />
             </div>
