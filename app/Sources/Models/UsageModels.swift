@@ -5,8 +5,23 @@ struct UsageWindow: Equatable {
     let resetsAt: Date
 
     var percent: Double {
-        let value = utilization <= 1 ? utilization * 100 : utilization
+        let value: Double
+        if utilization >= 0 && utilization <= 1 {
+            value = utilization * 100
+        } else if utilization > 1 && utilization <= 100 {
+            value = utilization
+        } else {
+            value = min(max(utilization, 0), 100)
+        }
         return min(max(value, 0), 100)
+    }
+
+    var resetHasPassed: Bool {
+        resetsAt <= Date()
+    }
+
+    var isStaleAtCap: Bool {
+        resetHasPassed && percent >= 90
     }
 }
 

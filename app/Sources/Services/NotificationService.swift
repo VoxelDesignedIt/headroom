@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import UserNotifications
 
@@ -27,13 +26,15 @@ final class NotificationService: NSObject, ObservableObject, UNUserNotificationC
 
     private let center = UNUserNotificationCenter.current()
     private var lastThresholdNotified: [String: Int] = [:]
-    private var pendingResetAlerts: Set<String> = []
+    private var notifiedResetEpochs: Set<String> = []
+    private var scheduledResetEpochs: [String: TimeInterval] = [:]
 
-    private let warningThresholds = [75, 85, 90, 95]
+    private let warningThresholds = [50, 75, 85, 95, 100]
 
     private override init() {
         super.init()
         center.delegate = self
+        registerCategories()
     }
 
     func requestAuthorization() {
@@ -49,31 +50,67 @@ final class NotificationService: NSObject, ObservableObject, UNUserNotificationC
     func handle(snapshot: UsageSnapshot?, previous: UsageSnapshot?) {
         guard let snapshot else { return }
 
-        evaluate(window: snapshot.session, kind: .session, previous: previous?.session)
-        evaluate(window: snapshot.weekly, kind: .weekly, previous: previous?.weekly)
+        evaluate(window: snapshot.session, kind: .session, snapshot: snapshot, previous: previous?.session)
+        evaluate(window: snapshot.weekly, kind: .weekly, snapshot: snapshot, previous: previous?.weekly)
 
-        scheduleExactResetNotification(for: snapshot.session, kind: .session)
-        scheduleExactResetNotification(for: snapshot.weekly, kind: .weekly)
+        scheduleExactResetNotification(for: snapshot.session, kind: .session, snapshot: snapshot)
+        scheduleExactResetNotification(for: snapshot.weekly, kind: .weekly, snapshot: snapshot)
     }
 
-    private func evaluate(window: UsageWindow, kind: LimitKind, previous: UsageWindow?) {
+    func resetDeadlineElapsed(kind: LimitKind, resetsAt: Date, snapshot: UsageSnapshot, usageStillHigh: Bool) {
+        let epoch = Int(resetsAt.timeIntervalSince1970)
+        let key = "\(kind.notificationPrefix)-deadline-\(epoch)"
+        guard !notifiedResetEpochs.contains(key) else { return }
+        notifiedResetEpochs.insert(key)
+
+        deliverBanner(
+            identifier: key,
+            title: resetTitle(for: kind),
+            body: resetBody(for: kind, snapshot: snapshot, usageStillHigh: usageStillHigh)
+        )
+    }
+
+    func notifyUpdateAvailable(_ update: AppUpdate) {
+        deliverBanner(
+            identifier: "update-\(update.version)",
+            title: "Headroom \(update.version) is available",
+            body: "You are on \(AppConfig.currentVersion). Open Headroom to download the update.",
+            category: "HEADROOM_UPDATE"
+        )
+    }
+
+    func notifyUpdateDownloaded(version: String, at appURL: URL) {
+        deliverBanner(
+            identifier: "update-downloaded-\(version)",
+            title: "Headroom \(version) downloaded",
+            body: "Replace your current Headroom.app with the one in Downloads, then open it.",
+            category: "HEADROOM_UPDATE"
+        )
+        _ = appURL
+    }
+
+    private func evaluate(
+        window: UsageWindow,
+        kind: LimitKind,
+        snapshot: UsageSnapshot,
+        previous: UsageWindow?
+    ) {
         let percent = Int(window.percent.rounded())
         let key = kind.rawValue
 
         for threshold in warningThresholds where percent >= threshold {
-            let thresholdKey = "\(key)-warn-\(threshold)"
             if lastThresholdNotified[key, default: 0] < threshold {
                 lastThresholdNotified[key] = threshold
-                deliver(
-                    identifier: thresholdKey,
+                let weekly = Int(snapshot.weekly.percent.rounded())
+                deliverBanner(
+                    identifier: "\(key)-warn-\(threshold)",
                     title: "\(kind.title) at \(threshold)%",
-                    body: "You are at \(percent)% with \(ResetTimeFormatter.countdown(to: window.resetsAt)) until reset at \(ResetTimeFormatter.exact(window.resetsAt)).",
-                    interruption: .timeSensitive
+                    body: "\(kind.title): \(percent)% · Weekly: \(weekly)% · Resets \(ResetTimeFormatter.exact(window.resetsAt))"
                 )
             }
         }
 
-        if percent < 60 {
+        if percent < 40 {
             lastThresholdNotified[key] = 0
         }
 
@@ -81,75 +118,110 @@ final class NotificationService: NSObject, ObservableObject, UNUserNotificationC
             return
         }
 
-        let alertID = "\(kind.notificationPrefix)-reset-\(Int(window.resetsAt.timeIntervalSince1970))"
-        guard !pendingResetAlerts.contains(alertID) else { return }
+        let alertID = "\(kind.notificationPrefix)-api-reset-\(Int(window.resetsAt.timeIntervalSince1970))"
+        guard !notifiedResetEpochs.contains(alertID) else { return }
 
-        pendingResetAlerts.insert(alertID)
-        deliverResetAlert(kind: kind, resetsAt: window.resetsAt, identifier: alertID)
+        notifiedResetEpochs.insert(alertID)
+        deliverBanner(
+            identifier: alertID,
+            title: resetTitle(for: kind),
+            body: resetBody(for: kind, snapshot: snapshot, usageStillHigh: false)
+        )
     }
 
-    /// Only treat a window as reset when *that* window's usage dropped sharply and its
-    /// reset clock jumped forward — avoids false positives from rolling weekly timestamps.
+    private func resetTitle(for kind: LimitKind) -> String {
+        switch kind {
+        case .session: return "5-hour limit has reset"
+        case .weekly: return "Weekly limit has reset"
+        }
+    }
+
+    private func resetBody(for kind: LimitKind, snapshot: UsageSnapshot, usageStillHigh: Bool) -> String {
+        let weekly = Int(snapshot.weekly.percent.rounded())
+        let session = Int(snapshot.session.percent.rounded())
+
+        if usageStillHigh {
+            return "Weekly usage: \(weekly)% · 5-hour: \(session)%. Headroom is syncing the latest numbers."
+        }
+
+        switch kind {
+        case .session:
+            return "Weekly usage: \(weekly)% · 5-hour: \(session)%. Next 5-hour reset: \(ResetTimeFormatter.exact(snapshot.session.resetsAt))."
+        case .weekly:
+            return "Weekly usage: \(weekly)% · 5-hour: \(session)%. Next weekly reset: \(ResetTimeFormatter.exact(snapshot.weekly.resetsAt))."
+        }
+    }
+
     private func didWindowReset(current: UsageWindow, previous: UsageWindow, kind: LimitKind) -> Bool {
-        let usageDropped = previous.percent - current.percent >= 20
-        let usageCleared = current.percent <= 30
+        let usageDropped = previous.percent - current.percent >= 15
+        let usageCleared = current.percent <= 35
         let wasHigh = previous.percent >= 45
 
-        let minimumAdvance: TimeInterval = kind == .session ? 45 * 60 : 12 * 3600
+        let minimumAdvance: TimeInterval = kind == .session ? 30 * 60 : 12 * 3600
         let resetAdvanced = current.resetsAt.timeIntervalSince(previous.resetsAt) >= minimumAdvance
 
         return wasHigh && usageCleared && usageDropped && resetAdvanced
     }
 
-    private func deliverResetAlert(kind: LimitKind, resetsAt: Date, identifier: String) {
-        deliver(
-            identifier: identifier,
-            title: "\(kind.title) has reset",
-            body: "Your \(kind.title.lowercased()) is available again. Next reset: \(ResetTimeFormatter.exact(resetsAt)).",
-            interruption: .timeSensitive,
-            sound: true
-        )
-        showPersistentAlert(
-            title: "\(kind.title) has reset",
-            message: "Your \(kind.title.lowercased()) is available again.\n\nNext reset: \(ResetTimeFormatter.exact(resetsAt))"
-        )
-    }
-
-    private func scheduleExactResetNotification(for window: UsageWindow, kind: LimitKind) {
+    private func scheduleExactResetNotification(
+        for window: UsageWindow,
+        kind: LimitKind,
+        snapshot: UsageSnapshot
+    ) {
         let identifier = "\(kind.notificationPrefix)-scheduled-reset"
+        let epoch = window.resetsAt.timeIntervalSince1970
+
+        if scheduledResetEpochs[kind.rawValue] == epoch {
+            return
+        }
+        scheduledResetEpochs[kind.rawValue] = epoch
+
         center.removePendingNotificationRequests(withIdentifiers: [identifier])
 
-        let interval = window.resetsAt.timeIntervalSinceNow
-        guard interval > 5 else { return }
-
-        let content = UNMutableNotificationContent()
-        content.title = "\(kind.title) has reset"
-        content.body = "Your \(kind.title.lowercased()) just reset. You are good to go."
-        content.sound = .default
-        if #available(macOS 12.0, *) {
-            content.interruptionLevel = .timeSensitive
+        let secondsUntilReset = window.resetsAt.timeIntervalSinceNow
+        if secondsUntilReset <= 1 {
+            if window.percent >= 45 {
+                resetDeadlineElapsed(
+                    kind: kind,
+                    resetsAt: window.resetsAt,
+                    snapshot: snapshot,
+                    usageStillHigh: window.percent >= 90
+                )
+            }
+            return
         }
 
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+        let content = UNMutableNotificationContent()
+        content.title = resetTitle(for: kind)
+        content.body = resetBody(for: kind, snapshot: snapshot, usageStillHigh: false)
+        content.sound = .default
+        content.categoryIdentifier = "HEADROOM_RESET"
+        if #available(macOS 12.0, *) {
+            content.interruptionLevel = .active
+        }
+
+        let components = Calendar.current.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second],
+            from: window.resetsAt
+        )
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
         center.add(request)
     }
 
-    private func deliver(
+    private func deliverBanner(
         identifier: String,
         title: String,
         body: String,
-        interruption: UNNotificationInterruptionLevel = .active,
-        sound: Bool = true
+        category: String = "HEADROOM_RESET"
     ) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        if sound {
-            content.sound = .default
-        }
+        content.sound = .default
+        content.categoryIdentifier = category
         if #available(macOS 12.0, *) {
-            content.interruptionLevel = interruption
+            content.interruptionLevel = .active
         }
 
         let request = UNNotificationRequest(
@@ -160,16 +232,23 @@ final class NotificationService: NSObject, ObservableObject, UNUserNotificationC
         center.add(request)
     }
 
-    private func showPersistentAlert(title: String, message: String) {
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = title
-            alert.informativeText = message
-            alert.alertStyle = .informational
-            alert.addButton(withTitle: "OK")
-            NSApp.activate(ignoringOtherApps: true)
-            alert.runModal()
-        }
+    private func registerCategories() {
+        let updateAction = UNNotificationAction(
+            identifier: "OPEN_HEADROOM",
+            title: "Open Headroom",
+            options: [.foreground]
+        )
+        let updateCategory = UNNotificationCategory(
+            identifier: "HEADROOM_UPDATE",
+            actions: [updateAction],
+            intentIdentifiers: []
+        )
+        let resetCategory = UNNotificationCategory(
+            identifier: "HEADROOM_RESET",
+            actions: [],
+            intentIdentifiers: []
+        )
+        center.setNotificationCategories([updateCategory, resetCategory])
     }
 
     nonisolated func userNotificationCenter(
@@ -177,5 +256,15 @@ final class NotificationService: NSObject, ObservableObject, UNUserNotificationC
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner, .sound, .list]
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard response.actionIdentifier == "OPEN_HEADROOM" else { return }
+        await MainActor.run {
+            NotificationCenter.default.post(name: .openSettings, object: nil)
+        }
     }
 }

@@ -7,10 +7,12 @@ final class UsageService: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var hasCookie = false
+    @Published var isSyncingAfterReset = false
 
     private var organizationID: String?
     private var refreshTimer: Timer?
     private var resetTimers: [Timer] = []
+    private var overdueBurstTimer: Timer?
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -59,7 +61,9 @@ final class UsageService: ObservableObject {
         snapshot = nil
         organizationID = nil
         errorMessage = nil
+        isSyncingAfterReset = false
         stopAutoRefresh()
+        stopOverdueBurst()
     }
 
     func startAutoRefresh() {
@@ -105,6 +109,7 @@ final class UsageService: ObservableObject {
             let usage = try await fetchUsage(cookie: cookie, organizationID: organizationID)
             snapshot = usage
             errorMessage = nil
+            updateSyncingState(for: usage)
             scheduleResetRefreshes(for: usage)
         } catch let error as UsageServiceError {
             errorMessage = error.localizedDescription
@@ -116,8 +121,18 @@ final class UsageService: ObservableObject {
         }
     }
 
+    private func updateSyncingState(for usage: UsageSnapshot) {
+        let stale = usage.session.isStaleAtCap || usage.weekly.isStaleAtCap
+        isSyncingAfterReset = stale
+        if stale {
+            startOverdueBurst()
+        } else {
+            stopOverdueBurst()
+        }
+    }
+
     private func fetchOrganizationID(cookie: String) async throws -> String {
-        guard let url = URL(string: "https://claude.ai/api/organizations") else {
+        guard let url = cacheBustedURL("https://claude.ai/api/organizations") else {
             throw UsageServiceError.invalidURL
         }
 
@@ -133,7 +148,7 @@ final class UsageService: ObservableObject {
     }
 
     private func fetchUsage(cookie: String, organizationID: String) async throws -> UsageSnapshot {
-        guard let url = URL(string: "https://claude.ai/api/organizations/\(organizationID)/usage") else {
+        guard let url = cacheBustedURL("https://claude.ai/api/organizations/\(organizationID)/usage") else {
             throw UsageServiceError.invalidURL
         }
 
@@ -146,6 +161,9 @@ final class UsageService: ObservableObject {
 
         guard let sessionWindow = parseWindow(json["five_hour"]),
               let weeklyWindow = parseWindow(json["seven_day"]) else {
+            if let raw = String(data: data, encoding: .utf8) {
+                print("Headroom parse failure: \(raw.prefix(300))")
+            }
             throw UsageServiceError.invalidResponse
         }
 
@@ -158,48 +176,86 @@ final class UsageService: ObservableObject {
         )
     }
 
+    private func cacheBustedURL(_ string: String) -> URL? {
+        guard var components = URLComponents(string: string) else { return nil }
+        components.queryItems = [URLQueryItem(name: "t", value: String(Int(Date().timeIntervalSince1970)))]
+        return components.url
+    }
+
     private func scheduleResetRefreshes(for usage: UsageSnapshot) {
         resetTimers.forEach { $0.invalidate() }
         resetTimers.removeAll()
 
-        let windows: [(String, UsageWindow)] = [
-            ("session", usage.session),
-            ("weekly", usage.weekly)
+        let windows: [(LimitKind, UsageWindow)] = [
+            (.session, usage.session),
+            (.weekly, usage.weekly)
         ]
 
-        for (_, window) in windows {
+        for (kind, window) in windows {
             let secondsUntilReset = window.resetsAt.timeIntervalSinceNow
-            guard secondsUntilReset > 0 else {
-                Task { await refresh() }
+
+            if secondsUntilReset <= 0 {
+                NotificationService.shared.resetDeadlineElapsed(
+                    kind: kind,
+                    resetsAt: window.resetsAt,
+                    snapshot: usage,
+                    usageStillHigh: window.percent >= 90
+                )
+                startOverdueBurst()
                 continue
             }
 
-            // Poll aggressively right before and exactly when a window resets.
-            let leadUp = max(0, secondsUntilReset - 30)
-            let timer = Timer(timeInterval: leadUp, repeats: false) { [weak self] _ in
+            let fireAtReset = Timer(fire: window.resetsAt, interval: 0, repeats: false) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     await self?.refresh()
-                    self?.startBurstPolling()
+                    if let snapshot = self?.snapshot {
+                        NotificationService.shared.resetDeadlineElapsed(
+                            kind: kind,
+                            resetsAt: window.resetsAt,
+                            snapshot: snapshot,
+                            usageStillHigh: snapshot.session.percent >= 90 || snapshot.weekly.percent >= 90
+                        )
+                    }
+                    self?.startOverdueBurst()
                 }
             }
-            RunLoop.main.add(timer, forMode: .common)
-            resetTimers.append(timer)
+            RunLoop.main.add(fireAtReset, forMode: .common)
+            resetTimers.append(fireAtReset)
+
+            let leadUp = max(0, secondsUntilReset - 45)
+            let preResetTimer = Timer(timeInterval: leadUp, repeats: false) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.refresh()
+                    self?.startOverdueBurst()
+                }
+            }
+            RunLoop.main.add(preResetTimer, forMode: .common)
+            resetTimers.append(preResetTimer)
         }
     }
 
-    private func startBurstPolling() {
+    private func startOverdueBurst() {
+        guard overdueBurstTimer == nil else { return }
+
         var polls = 0
-        let burst = Timer(timeInterval: 5, repeats: true) { [weak self] timer in
+        let timer = Timer(timeInterval: 3, repeats: true) { [weak self] timer in
             polls += 1
             Task { @MainActor [weak self] in
-                await self?.refresh()
-            }
-            if polls >= 12 {
-                timer.invalidate()
+                guard let self else { return }
+                await self.refresh()
+                if !self.isSyncingAfterReset || polls >= 40 {
+                    timer.invalidate()
+                    self.overdueBurstTimer = nil
+                }
             }
         }
-        RunLoop.main.add(burst, forMode: .common)
-        resetTimers.append(burst)
+        RunLoop.main.add(timer, forMode: .common)
+        overdueBurstTimer = timer
+    }
+
+    private func stopOverdueBurst() {
+        overdueBurstTimer?.invalidate()
+        overdueBurstTimer = nil
     }
 
     private func makeRequest(url: URL, cookie: String) -> URLRequest {
@@ -215,6 +271,8 @@ final class UsageService: ObservableObject {
         request.setValue("https://claude.ai/settings/usage", forHTTPHeaderField: "Referer")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
         return request
     }
 
@@ -238,11 +296,18 @@ final class UsageService: ObservableObject {
     private func parseWindow(_ value: Any?) -> UsageWindow? {
         guard let dict = value as? [String: Any],
               let utilization = parseUtilization(dict["utilization"]),
-              let resetString = dict["resets_at"] as? String,
+              let resetString = parseResetString(dict["resets_at"]),
               let resetsAt = parseISO8601(resetString) else {
             return nil
         }
         return UsageWindow(utilization: utilization, resetsAt: resetsAt)
+    }
+
+    private func parseResetString(_ value: Any?) -> String? {
+        if let string = value as? String {
+            return string
+        }
+        return nil
     }
 
     private func parseUtilization(_ value: Any?) -> Double? {
@@ -253,6 +318,8 @@ final class UsageService: ObservableObject {
             return Double(number)
         case let number as NSNumber:
             return number.doubleValue
+        case let string as String:
+            return Double(string.trimmingCharacters(in: .whitespacesAndNewlines))
         default:
             return nil
         }

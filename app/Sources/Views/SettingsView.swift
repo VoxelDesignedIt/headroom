@@ -2,12 +2,35 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var usageService: UsageService
+    @ObservedObject private var updateService = UpdateService.shared
     @State private var cookieInput = ""
     @State private var refreshSeconds = 60.0
     @State private var launchAtLogin = false
 
     var body: some View {
         Form {
+            if let update = updateService.availableUpdate {
+                Section("Update Available") {
+                    Text("Headroom \(update.version) is available. You are on \(AppConfig.currentVersion).")
+                        .font(.caption)
+                    HStack {
+                        Button(updateService.isDownloading ? "Downloading…" : "Download Update") {
+                            Task { await updateService.downloadAndInstall() }
+                        }
+                        .disabled(updateService.isDownloading)
+
+                        Button("Release Notes") {
+                            NSWorkspace.shared.open(update.releasePageURL)
+                        }
+                    }
+                    if let error = updateService.downloadError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+
             Section("Session Cookie") {
                 Text("Copy your `sessionKey` from claude.ai (DevTools → Application → Cookies).")
                     .font(.caption)
@@ -41,9 +64,14 @@ struct SettingsView: View {
             }
 
             Section("Notifications") {
-                Text("Warnings at 75%, 85%, 90%, and 95%. Exact reset alerts fire at the scheduled reset time.")
+                Text("Banner alerts at 50%, 75%, 85%, 95%, and 100%. Reset alerts include your weekly usage and stay in Notification Center until dismissed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button("Open Notification Settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
             }
 
             Section("Startup") {
@@ -54,10 +82,11 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 360)
+        .frame(width: 460, height: 420)
         .onAppear {
             refreshSeconds = usageService.refreshInterval
             launchAtLogin = LaunchAtLoginService.isEnabled()
+            Task { await updateService.checkForUpdates(notifyIfAvailable: false) }
         }
     }
 }

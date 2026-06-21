@@ -4,6 +4,7 @@ struct UsageBarView: View {
     let title: String
     let percent: Double
     let resetsAt: Date
+    var isStale: Bool = false
 
     private var barColor: Color {
         switch percent {
@@ -20,7 +21,7 @@ struct UsageBarView: View {
                 Text(title)
                     .font(.headline)
                 Spacer()
-                Text("\(Int(percent.rounded()))%")
+                Text(isStale ? "Syncing…" : "\(Int(percent.rounded()))%")
                     .font(.headline.monospacedDigit())
                     .foregroundStyle(barColor)
             }
@@ -43,6 +44,11 @@ struct UsageBarView: View {
                 Text("In \(ResetTimeFormatter.countdown(to: resetsAt))")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
+                if isStale {
+                    Text("Reset time passed — fetching updated usage")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
             }
         }
     }
@@ -50,6 +56,7 @@ struct UsageBarView: View {
 
 struct UsagePopoverView: View {
     @ObservedObject var usageService: UsageService
+    @ObservedObject private var updateService = UpdateService.shared
     @State private var now = Date()
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -65,16 +72,33 @@ struct UsagePopoverView: View {
                 }
             }
 
+            if let update = updateService.availableUpdate {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Update \(update.version) available")
+                        .font(.subheadline.bold())
+                    Button(updateService.isDownloading ? "Downloading…" : "Download Update") {
+                        Task { await updateService.downloadAndInstall() }
+                    }
+                    .disabled(updateService.isDownloading)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.accentColor.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
             if let snapshot = usageService.snapshot {
                 UsageBarView(
                     title: "5-hour window",
                     percent: snapshot.session.percent,
-                    resetsAt: snapshot.session.resetsAt
+                    resetsAt: snapshot.session.resetsAt,
+                    isStale: snapshot.session.isStaleAtCap
                 )
                 UsageBarView(
                     title: "Weekly limit",
                     percent: snapshot.weekly.percent,
-                    resetsAt: snapshot.weekly.resetsAt
+                    resetsAt: snapshot.weekly.resetsAt,
+                    isStale: snapshot.weekly.isStaleAtCap
                 )
 
                 if let sonnet = snapshot.weeklySonnet {

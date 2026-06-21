@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         NotificationService.shared.requestAuthorization()
+        UpdateService.shared.startPeriodicChecks()
         setupStatusItem()
         setupObservers()
         startIconUpdates()
@@ -75,15 +76,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let maxUsage = max(session, weekly)
 
             let symbol: String
-            switch maxUsage {
-            case 90...: symbol = "🔴"
-            case 75..<90: symbol = "🟠"
-            case 50..<75: symbol = "🟡"
-            default: symbol = "🟢"
+            if usageService.isSyncingAfterReset {
+                symbol = "⏳"
+            } else {
+                switch maxUsage {
+                case 90...: symbol = "🔴"
+                case 75..<90: symbol = "🟠"
+                case 50..<75: symbol = "🟡"
+                default: symbol = "🟢"
+                }
             }
 
-            button.title = "\(symbol) \(session)%"
-            button.toolTip = "Headroom 5h: \(session)% · Weekly: \(weekly)% · Resets \(ResetTimeFormatter.exact(snapshot.session.resetsAt))"
+            let sessionLabel = usageService.isSyncingAfterReset && snapshot.session.isStaleAtCap
+                ? "sync"
+                : "\(session)%"
+            button.title = "\(symbol) \(sessionLabel)"
+            button.toolTip = usageService.isSyncingAfterReset
+                ? "Reset time passed — syncing latest usage from Claude…"
+                : "Headroom 5h: \(session)% · Weekly: \(weekly)% · Resets \(ResetTimeFormatter.exact(snapshot.session.resetsAt))"
         } else if usageService.hasCookie {
             button.title = "⏳ …"
             button.toolTip = "Fetching usage"
