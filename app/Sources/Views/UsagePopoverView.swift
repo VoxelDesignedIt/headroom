@@ -76,7 +76,7 @@ struct UsagePopoverView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Update \(update.version) available")
                         .font(.subheadline.bold())
-                    Button(updateService.isDownloading ? "Downloading…" : "Download Update") {
+                    Button(updateService.isDownloading ? "Updating…" : "Update & Restart") {
                         Task { await updateService.downloadAndInstall() }
                     }
                     .disabled(updateService.isDownloading)

@@ -26,6 +26,7 @@ final class UsageService: ObservableObject {
     }
 
     init() {
+        KeychainService.shared.migrateStoredCredentialsIfNeeded()
         hasCookie = KeychainService.shared.getCookie() != nil
         if hasCookie {
             startAutoRefresh()

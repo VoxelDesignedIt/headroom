@@ -100,11 +100,46 @@ final class UpdateService: ObservableObject {
                 ])
             }
 
-            NSWorkspace.shared.activateFileViewerSelecting([appURL, zipURL])
-            NotificationService.shared.notifyUpdateDownloaded(version: update.version, at: appURL)
+            KeychainService.shared.ensurePortableBackup()
+            removeQuarantine(from: appURL)
+            try installAndRelaunch(replacing: Bundle.main.bundleURL, with: appURL)
+            NotificationService.shared.notifyUpdateDownloaded(version: update.version, at: Bundle.main.bundleURL)
         } catch {
             downloadError = error.localizedDescription
         }
+    }
+
+    private func installAndRelaunch(replacing currentApp: URL, with newApp: URL) throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("headroom-update-\(UUID().uuidString).sh")
+        let script = """
+        #!/bin/bash
+        sleep 1.5
+        xattr -dr com.apple.quarantine "\(newApp.path)" 2>/dev/null || true
+        ditto "\(newApp.path)" "\(currentApp.path)"
+        xattr -dr com.apple.quarantine "\(currentApp.path)" 2>/dev/null || true
+        open "\(currentApp.path)"
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: scriptURL.path
+        )
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptURL.path]
+        try process.run()
+
+        NSApp.terminate(nil)
+    }
+
+    private func removeQuarantine(from url: URL) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        process.arguments = ["-dr", "com.apple.quarantine", url.path]
+        try? process.run()
+        process.waitUntilExit()
     }
 
     private func fetchLatestRelease() async throws -> AppUpdate? {

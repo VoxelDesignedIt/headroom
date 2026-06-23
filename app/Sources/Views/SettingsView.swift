@@ -11,10 +11,10 @@ struct SettingsView: View {
         Form {
             if let update = updateService.availableUpdate {
                 Section("Update Available") {
-                    Text("Headroom \(update.version) is available. You are on \(AppConfig.currentVersion).")
+                    Text("Headroom \(update.version) is available. You are on \(AppConfig.currentVersion). Your session cookie is kept automatically.")
                         .font(.caption)
                     HStack {
-                        Button(updateService.isDownloading ? "Downloading…" : "Download Update") {
+                        Button(updateService.isDownloading ? "Updating…" : "Update & Restart") {
                             Task { await updateService.downloadAndInstall() }
                         }
                         .disabled(updateService.isDownloading)
@@ -32,7 +32,7 @@ struct SettingsView: View {
             }
 
             Section("Session Cookie") {
-                Text("Copy your `sessionKey` from claude.ai (DevTools → Application → Cookies).")
+                Text("Copy your `sessionKey` from claude.ai (DevTools → Application → Cookies). Saved once — it carries over when you update Headroom.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

@@ -22,4 +22,8 @@ if [ -f "$ROOT/../brand/output/AppIcon.icns" ]; then
 fi
 chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
+echo "Code signing..."
+codesign --force --deep --sign - --entitlements "$ROOT/Headroom.entitlements" "$APP_BUNDLE"
+codesign --verify --deep --strict "$APP_BUNDLE"
+
 echo "Built: $APP_BUNDLE"

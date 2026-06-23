@@ -21,7 +21,15 @@ Headroom is a free, lightweight macOS menu bar app that tracks your Claude **5-h
 
 ## Download
 
-Grab the latest `Headroom-macOS.zip` from [Releases](https://github.com/VoxelDesignedIt/headroom/releases/latest), unzip, and open `Headroom.app`.
+Grab the latest `Headroom-macOS.zip` from [Releases](https://github.com/VoxelDesignedIt/headroom/releases/latest), unzip, and **double-click `Open Headroom.command`** (not `Headroom.app` directly).
+
+macOS may block unsigned downloads with a “corrupted” or “damaged” warning. That is Gatekeeper, not a broken app. Either:
+
+- Double-click **`Open Headroom.command`** in the unzipped folder, or
+- Right-click `Headroom.app` → **Open** → **Open**, or
+- Run in Terminal: `xattr -cr /path/to/Headroom.app`
+
+To distribute without warnings long-term, the app would need Apple Developer ID signing and notarization.
 
 Or build from source:
 

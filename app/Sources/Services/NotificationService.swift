@@ -82,8 +82,8 @@ final class NotificationService: NSObject, ObservableObject, UNUserNotificationC
     func notifyUpdateDownloaded(version: String, at appURL: URL) {
         deliverBanner(
             identifier: "update-downloaded-\(version)",
-            title: "Headroom \(version) downloaded",
-            body: "Replace your current Headroom.app with the one in Downloads, then open it.",
+            title: "Headroom \(version) installed",
+            body: "Headroom is restarting. Your session cookie was kept.",
             category: "HEADROOM_UPDATE"
         )
         _ = appURL
